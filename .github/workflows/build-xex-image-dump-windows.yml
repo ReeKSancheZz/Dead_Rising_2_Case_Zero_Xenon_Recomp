@@ -74,6 +74,9 @@ jobs:
           $exitCode = $LASTEXITCODE
           $output | Out-String
           if ($exitCode -ne 1) { throw "Extractor did not return its expected usage exit code (got $exitCode)" }
+          if (($output | Out-String) -notmatch 'usage:.*xex_image_dump.exe.*<default.xex>.*<out.bin>') { throw "Extractor usage output was not recognized" }
+          # The non-zero exit code is expected for the no-arguments usage test.
+          $global:LASTEXITCODE = 0
 
       - name: Upload Windows extractor
         uses: actions/upload-artifact@v4
