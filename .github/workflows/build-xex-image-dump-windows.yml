@@ -1,0 +1,82 @@
+name: Build XEX image dumper (Windows)
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "tools/xex_image_dump.cpp"
+      - "tools/ci/xenonrecomp-local.patch"
+      - ".github/workflows/build-xex-image-dump-windows.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - name: Check out Case Zero fork
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install LLVM
+        uses: KyleMayes/install-llvm-action@v2
+        with:
+          version: "19.1"
+          directory: ${{ runner.temp }}\\llvm
+
+      - name: Get matching XenonRecomp source
+        shell: pwsh
+        run: |
+          git clone --recurse-submodules https://github.com/hedge-dev/XenonRecomp.git "$env:RUNNER_TEMP\\XenonRecomp"
+          if ($LASTEXITCODE -ne 0) { throw "XenonRecomp clone failed" }
+          Set-Location "$env:RUNNER_TEMP\\XenonRecomp"
+          git checkout ddd128bcca99fe8bfbb99bea583c972351fa6ace
+          if ($LASTEXITCODE -ne 0) { throw "XenonRecomp checkout failed" }
+          git submodule update --init --recursive
+          if ($LASTEXITCODE -ne 0) { throw "XenonRecomp submodule setup failed" }
+
+      - name: Apply Case Zero compatibility patch
+        shell: pwsh
+        run: |
+          Set-Location "$env:RUNNER_TEMP\\XenonRecomp"
+          git apply "$env:GITHUB_WORKSPACE\\tools\\ci\\xenonrecomp-local.patch"
+          if ($LASTEXITCODE -ne 0) { throw "Compatibility patch did not apply" }
+
+      - name: Build XenonUtils
+        shell: pwsh
+        run: |
+          $xr = "$env:RUNNER_TEMP\\XenonRecomp"
+          cmake -S $xr -B "$xr\\build" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl
+          if ($LASTEXITCODE -ne 0) { throw "CMake configure failed" }
+          cmake --build "$xr\\build" --target XenonUtils disasm fmt
+          if ($LASTEXITCODE -ne 0) { throw "XenonUtils build failed" }
+
+      - name: Build xex_image_dump.exe
+        shell: pwsh
+        run: |
+          $xr = "$env:RUNNER_TEMP\\XenonRecomp"
+          $out = "$env:GITHUB_WORKSPACE\\xex_image_dump.exe"
+          clang-cl /nologo /O2 /std:c++20 /EHsc "/I$xr\\XenonUtils" "/I$xr\\thirdparty\\simde" "/I$xr\\thirdparty\\fmt\\include" "$env:GITHUB_WORKSPACE\\tools\\xex_image_dump.cpp" /Fe:$out /link "/LIBPATH:$xr\\build\\XenonUtils" "/LIBPATH:$xr\\build\\thirdparty\\disasm" "/LIBPATH:$xr\\build\\thirdparty\\fmt" XenonUtils.lib disasm.lib fmt.lib
+          if ($LASTEXITCODE -ne 0) { throw "Extractor compile/link failed" }
+
+      - name: Smoke test
+        shell: pwsh
+        run: |
+          & "$env:GITHUB_WORKSPACE\\xex_image_dump.exe" 2>&1 | Out-String
+          if ($LASTEXITCODE -ne 1) { throw "Extractor did not return its expected usage exit code" }
+
+      - name: Upload Windows extractor
+        uses: actions/upload-artifact@v4
+        with:
+          name: case-zero-xex-image-dump-windows
+          path: xex_image_dump.exe
+          if-no-files-found: error
+          retention-days: 14
