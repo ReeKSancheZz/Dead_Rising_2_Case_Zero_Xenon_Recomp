@@ -1,0 +1,67 @@
+name: Build XEX image dumper
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "tools/xex_image_dump.cpp"
+      - "tools/ci/xenonrecomp-local.patch"
+      - ".github/workflows/build-xex-image-dump.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out Case Zero fork
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build git
+
+      - name: Get the matching XenonRecomp source
+        run: |
+          git clone --recurse-submodules https://github.com/hedge-dev/XenonRecomp.git "$RUNNER_TEMP/XenonRecomp"
+          cd "$RUNNER_TEMP/XenonRecomp"
+          git checkout ddd128bcca99fe8bfbb99bea583c972351fa6ace
+          git submodule update --init --recursive
+
+      - name: Apply the Case Zero compatibility patch
+        run: |
+          cd "$RUNNER_TEMP/XenonRecomp"
+          git apply "$GITHUB_WORKSPACE/tools/ci/xenonrecomp-local.patch"
+
+      - name: Build XenonUtils
+        run: |
+          cmake -S "$RUNNER_TEMP/XenonRecomp" -B "$RUNNER_TEMP/XenonRecomp/build" -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build "$RUNNER_TEMP/XenonRecomp/build" --target XenonUtils disasm fmt
+
+      - name: Build xex_image_dump
+        run: |
+          XR="$RUNNER_TEMP/XenonRecomp"
+          g++ -O2 -std=c++20 -o "$GITHUB_WORKSPACE/xex_image_dump" "$GITHUB_WORKSPACE/tools/xex_image_dump.cpp" \
+            -I"$XR/XenonUtils" \
+            -I"$XR/thirdparty/simde" \
+            -I"$XR/thirdparty/fmt/include" \
+            "$XR/build/XenonUtils/libXenonUtils.a" \
+            "$XR/build/thirdparty/disasm/libdisasm.a" \
+            "$XR/build/thirdparty/fmt/libfmt.a"
+
+      - name: Smoke test
+        run: |
+          ./xex_image_dump 2>&1 | grep -q "usage:"
+
+      - name: Upload extractor
+        uses: actions/upload-artifact@v4
+        with:
+          name: case-zero-xex-image-dump-linux
+          path: xex_image_dump
+          if-no-files-found: error
+          retention-days: 14
