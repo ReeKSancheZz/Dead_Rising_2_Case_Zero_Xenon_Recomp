@@ -70,8 +70,10 @@ jobs:
       - name: Smoke test
         shell: pwsh
         run: |
-          & "$env:GITHUB_WORKSPACE\\xex_image_dump.exe" 2>&1 | Out-String
-          if ($LASTEXITCODE -ne 1) { throw "Extractor did not return its expected usage exit code" }
+          $output = & "$env:GITHUB_WORKSPACE\\xex_image_dump.exe" 2>&1
+          $exitCode = $LASTEXITCODE
+          $output | Out-String
+          if ($exitCode -ne 1) { throw "Extractor did not return its expected usage exit code (got $exitCode)" }
 
       - name: Upload Windows extractor
         uses: actions/upload-artifact@v4
